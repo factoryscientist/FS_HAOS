@@ -1,0 +1,66 @@
+# Board: Seeed XIAO ESP32S3 Sense (Seeed Studio)
+# OV2640 カメラ + 8MB オクタルPSRAM + 8MB フラッシュ
+esphome:
+  name: xiaos3sense
+  friendly_name: xiaoESP32S3 Sense
+
+esp32:
+  board: seeed_xiao_esp32s3
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+# esp32_camera に必須（XIAO S3 Sense はオクタルPSRAM）
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+api:
+  encryption:
+    key: 
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: !secret current_sensor__ap_ssid
+    password: !secret current_sensor__encryption_key
+captive_portal:
+
+# --- カメラ (XIAO ESP32S3 Sense 固定ピン配置) ---
+esp32_camera:
+  id: espcam
+  name: My Camera
+  external_clock:
+    pin: GPIO10
+    frequency: 20MHz
+  i2c_pins:
+    sda: GPIO40
+    scl: GPIO39
+  data_pins: [GPIO15, GPIO17, GPIO18, GPIO16, GPIO14, GPIO12, GPIO11, GPIO48]
+  vsync_pin: GPIO38
+  href_pin: GPIO47
+  pixel_clock_pin: GPIO13
+  # reset_pin / power_down_pin はこのボードには無い
+
+  # 画質設定（必要に応じて調整）
+  resolution: 800x600
+  jpeg_quality: 10
+  max_framerate: 10 fps
+  idle_framerate: 0.1 fps
+  vertical_flip: false
+  horizontal_mirror: false
+
+# --- ブラウザから直接見る用 ---
+# http://xiaos3sense.local:8080  (MJPEGストリーム)
+# http://xiaos3sense.local:8081  (静止画)
+esp32_camera_web_server:
+  - port: 8080
+    mode: stream
+  - port: 8081
+    mode: snapshot
