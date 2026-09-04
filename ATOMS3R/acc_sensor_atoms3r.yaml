@@ -1,0 +1,312 @@
+# M5Stack AtomS3R — 振動による異常検知（画面表示つき）
+# IMU: BMI270（motion プラットフォーム、加速度の単位は G）
+# LCD: mipi_spi ST7789V ／ バックライト: LP5562
+
+esphome:
+  name: atoms3r-vibration
+  friendly_name: 振動センサー
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+# ---------- 外部コンポーネント ----------
+external_components:
+  - source: github://m5stack/esphome-yaml/components
+    components: [lp5562]
+    refresh: 0s
+
+logger:
+
+api:
+  encryption:
+    key: 
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+
+captive_portal:
+
+# ---------- I2C ----------
+# 内部バス: LP5562 (0x30), BMI270 (0x68), BMM150
+i2c:
+  - id: bsp_bus
+    sda:
+      number: GPIO45
+      ignore_strapping_warning: true
+    scl:
+      number: GPIO0
+      ignore_strapping_warning: true
+    scan: true
+    frequency: 100kHz
+
+# ---------- IMU（AtomS3R 内蔵 BMI270）----------
+motion:
+  - platform: bmi270
+    id: imu
+    i2c_id: bsp_bus
+    address: 0x68
+    update_interval: 200ms
+
+# ---------- SPI（内蔵LCD）----------
+spi:
+  clk_pin: GPIO15
+  mosi_pin: GPIO21
+
+# ---------- バックライト（LP5562 経由）----------
+lp5562:
+  id: lp5562_led
+  i2c_id: bsp_bus
+  use_internal_clk: true
+  white_current: 17.5
+
+output:
+  - platform: lp5562
+    id: backlight_output
+    lp5562_id: lp5562_led
+    channel: white
+
+light:
+  - platform: monochromatic
+    output: backlight_output
+    id: backlight
+    name: "Backlight"
+    restore_mode: RESTORE_DEFAULT_ON
+
+color:
+  - id: col_white
+    red: 100%
+    green: 100%
+    blue: 100%
+  - id: col_gray
+    red: 45%
+    green: 45%
+    blue: 45%
+  - id: col_bar
+    red: 12%
+    green: 12%
+    blue: 18%
+  - id: col_green
+    red: 15%
+    green: 85%
+    blue: 30%
+  - id: col_red
+    red: 95%
+    green: 25%
+    blue: 25%
+  - id: col_amber
+    red: 91%
+    green: 64%
+    blue: 24%
+  - id: col_cyan
+    red: 30%
+    green: 85%
+    blue: 95%
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_s
+    size: 13
+    glyphs: '!"%()+=,-_.:°/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+  - file: "gfonts://Roboto"
+    id: font_m
+    size: 18
+    glyphs: '%.-+°/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
+  - file: "gfonts://Roboto@700"
+    id: font_l
+    size: 30
+    glyphs: '.-+°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ '
+
+# ---------- ディスプレイ ----------
+display:
+  - platform: mipi_spi
+    id: atoms3r_lcd
+    model: ST7789V
+    cs_pin: GPIO14
+    dc_pin: GPIO42
+    reset_pin: GPIO48
+    data_rate: 40MHz
+    dimensions:
+      width: 128
+      height: 128
+      offset_width: 2
+      offset_height: 1
+    invert_colors: true
+    update_interval: 500ms
+    lambda: |-
+      const bool wifi_ok = wifi::global_wifi_component->is_connected();
+      const bool api_ok  = api::global_api_server->is_connected();
+
+      // データ未取得なら黒画面
+      if (!id(vibration).has_state()) {
+        it.fill(Color::BLACK);
+        it.print(64, 64, id(font_m), id(col_gray), TextAlign::CENTER, "starting");
+        return;
+      }
+
+      const bool running = id(machine_running).state;
+      const float dev = id(vib_deviation).has_state() ? id(vib_deviation).state : 0.0f;
+      const bool alert = id(vib_alert).state;
+
+      // 状態で背景色を変える
+      if (alert) {
+        it.fill(id(col_red));
+      } else if (running) {
+        it.fill(id(col_green));
+      } else {
+        it.fill(Color::BLACK);
+      }
+
+      // ステータスバー
+      it.filled_rectangle(0, 0, 128, 18, id(col_bar));
+      it.print(4, 9, id(font_s), id(col_white), TextAlign::CENTER_LEFT, "WiFi");
+      it.filled_circle(38, 9, 4, wifi_ok ? id(col_green) : id(col_red));
+      it.print(54, 9, id(font_s), id(col_white), TextAlign::CENTER_LEFT, "HA");
+      it.filled_circle(80, 9, 4, api_ok ? id(col_green) : id(col_red));
+      if (id(rssi).has_state()) {
+        it.printf(125, 9, id(font_s), id(col_gray), TextAlign::CENTER_RIGHT,
+                  "%.0f", id(rssi).state);
+      }
+
+      // 状態の見出し
+      const char *label = alert ? "ALERT" : (running ? "RUN" : "STOP");
+      it.printf(64, 46, id(font_l), id(col_white), TextAlign::CENTER, "%s", label);
+
+      // 振動レベル（G）
+      it.printf(64, 80, id(font_m), id(col_white), TextAlign::CENTER,
+                "%.3f G", id(vibration).state);
+
+      // 平常時との差
+      it.printf(64, 106, id(font_s), id(col_white), TextAlign::CENTER,
+                "diff %+.3f", dev);
+
+# ---------- センサー ----------
+sensor:
+  # --- 加速度3軸（単位: G）---
+  - platform: motion
+    motion_id: imu
+    type: acceleration_x
+    name: "Acceleration X"
+    id: accel_x
+
+  - platform: motion
+    motion_id: imu
+    type: acceleration_y
+    name: "Acceleration Y"
+    id: accel_y
+
+  - platform: motion
+    motion_id: imu
+    type: acceleration_z
+    name: "Acceleration Z"
+    id: accel_z
+
+  # --- 角速度3軸 ---
+  - platform: motion
+    motion_id: imu
+    type: angular_rate_x
+    name: "Angular Rate X"
+    id: gyro_x
+
+  - platform: motion
+    motion_id: imu
+    type: angular_rate_y
+    name: "Angular Rate Y"
+    id: gyro_y
+
+  - platform: motion
+    motion_id: imu
+    type: angular_rate_z
+    name: "Angular Rate Z"
+    id: gyro_z
+
+  # --- 振動レベル（3軸合成から重力1Gを除いた値）---
+  - platform: template
+    name: "Vibration Level"
+    id: vibration
+    unit_of_measurement: "G"
+    accuracy_decimals: 4
+    update_interval: 200ms
+    lambda: |-
+      if (!id(accel_x).has_state()) return NAN;
+      float mag = sqrtf(
+        id(accel_x).state * id(accel_x).state +
+        id(accel_y).state * id(accel_y).state +
+        id(accel_z).state * id(accel_z).state);
+      // 単位はG。静止時は約1.0
+      return fabsf(mag - 1.0f);
+    filters:
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 5
+
+  # --- 平常時の基準（直近10分の平均）---
+  - platform: copy
+    source_id: vibration
+    name: "Vibration Baseline"
+    id: vib_baseline
+    unit_of_measurement: "G"
+    accuracy_decimals: 4
+    filters:
+      - sliding_window_moving_average:
+          window_size: 600
+          send_every: 60
+
+  # --- 基準からの乖離 ---
+  - platform: template
+    name: "Vibration Deviation"
+    id: vib_deviation
+    unit_of_measurement: "G"
+    accuracy_decimals: 4
+    update_interval: 5s
+    lambda: |-
+      if (!id(vibration).has_state() || !id(vib_baseline).has_state()) return NAN;
+      return id(vibration).state - id(vib_baseline).state;
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: rssi
+    update_interval: 60s
+
+# ---------- 判定 ----------
+binary_sensor:
+  # --- 稼働中か（静止時は 0.00x 程度。実測して調整すること）---
+  - platform: template
+    name: "Machine Running"
+    id: machine_running
+    lambda: |-
+      if (!id(vibration).has_state()) return false;
+      return id(vibration).state > 0.02;
+    filters:
+      - delayed_on: 3s
+      - delayed_off: 10s
+
+  # --- 異常振動（平常時より 0.05G 以上大きい）---
+  - platform: template
+    name: "Vibration Alert"
+    id: vib_alert
+    device_class: problem
+    lambda: |-
+      if (!id(vib_deviation).has_state()) return false;
+      return id(vib_deviation).state > 0.05;
+    filters:
+      - delayed_on: 10s
+      - delayed_off: 30s
+
+  # --- 内蔵ボタン（報告ボタンとして使える）---
+  - platform: gpio
+    pin:
+      number: GPIO41
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Button"
+    filters:
+      - delayed_on: 30ms
