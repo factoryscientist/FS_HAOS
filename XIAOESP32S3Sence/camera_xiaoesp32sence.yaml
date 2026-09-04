@@ -27,10 +27,6 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  ap:
-    ssid: !secret current_sensor__ap_ssid
-    password: !secret current_sensor__encryption_key
-captive_portal:
 
 # --- カメラ (XIAO ESP32S3 Sense 固定ピン配置) ---
 esp32_camera:
