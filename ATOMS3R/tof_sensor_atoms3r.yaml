@@ -31,8 +31,8 @@ ota:
   - platform: esphome
 
 wifi:
-  ssid:
-  password:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
 
 captive_portal:
 
